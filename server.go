@@ -10,7 +10,8 @@ if it is a message it will relay it back to everyone else in the channel
 	join
 	leave
 	request msgs #x - #y  //allow for negatives to index from the end
-	ack			//clients need to ack every minute to stay connected to the channels
+	ping			//clients need to ping every minute to stay connected to the channels
+	flag msg #		//flag msgs for inappropriate language or spam
 
 version History:
 v.1  - relay live message back to all listeners on a channel, no history is saved.
@@ -23,7 +24,7 @@ Written By Matt Warren 2013
 package main
 
 import (
-	//"fmt"
+	"fmt"
 	"net"
 	"os"
 	//"labix.org/v2/mgo"
@@ -35,18 +36,13 @@ import (
 )
 
 const (
-	PORT string = ":6666" //default port
-	RECV_BUF_LEN = 1024
+	PORT         string = ":6666" //default port
+	RECV_BUF_LEN        = 1024
 )
 
-type Server struct {
-	connection *net.Conn  //listening on
-	messages   chan string		//incoming messages/commands
-}
-
 type Channel struct {
-	messages   chan string		//outgoing messages to channel
-	clients    map[int]Client	//clients listening to Channel
+	messages chan Message   //outgoing messages to channel
+	clients  map[int]Client //clients listening to Channel
 }
 
 type Client struct {
@@ -56,48 +52,65 @@ type Client struct {
 }
 
 type Message struct {
-	userID   int
-	userName string
-	command  string
-	content  string
-	language string
-	messageNumber int
-	date     time.Time
+	UserID        int
+	UserName      string
+	Command       string
+	Content       string
+	Language      string
+	MessageNumber int
+	Date          time.Time
+}
+
+func (m *Message) String() string {
+	return fmt.Sprintf("%s %s %s", m.Command, m.UserName, m.Content)
+}
+
+func parseMessage(conn net.Conn) (message *Message, err error) {
+	buf := make([]byte, RECV_BUF_LEN)
+	_, err = conn.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+	//println("received ", n, " bytes of data =", string(buf))
+
+	err = bson.Unmarshal(buf, &message)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Println(message)
+	return message, nil
 }
 
 func handleMessage(conn net.Conn) {
 
 	//read data coming in - should be bson formatted Message
-	buf := make([]byte, RECV_BUF_LEN)
-	n, err := conn.Read(buf)
+	//var message Message
+	message, err := parseMessage(conn)
 	if err != nil {
-		println("Error reading:", err.Error())
+		fmt.Println("Error: ", err.Error())
 		return
-	}
-	println("received ", n, " bytes of data =", string(buf))
-	var message Message
-	err = bson.Unmarshal(buf, &message)
-	if err != nil {
-		println("ERROR:", err.Error())
 	}
 
 	//analyse message
-
-
-
-	//send reply
-	_, err = conn.Write(buf)
-	if err != nil {
-		println("Error send reply:", err.Error())
-	}else {
-		println("Reply sent")
+	switch message.Command {
+	case "msg":
+		fmt.Println("Got a Msg")
+	case "join":
+		fmt.Println("Join Channel")
+	case "leave":
+		fmt.Println("Leave Channel")
+	case "ping":
+		fmt.Println("Ping")
+	case "request":
+		fmt.Println("Request Messages")
+	case "flag":
+		fmt.Println("Flag Message")
+	default:
+		fmt.Println("unknown command: ", message)
 	}
 }
 
 func main() {
-
-	var s Server
-	s.messages = make(chan string, 30)
 
 	listener, err := net.Listen("tcp", PORT)
 	if err != nil {
@@ -106,13 +119,16 @@ func main() {
 	}
 
 	defer listener.Close()
+
+	//channel := make(Channel)
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			println("error accept:", err.Error())
-			continue
+		} else {
+			go handleMessage(conn) //pull in from TCP and push on to server Messages channel
 		}
-		go handleMessage(conn)
 	}
 
 }
